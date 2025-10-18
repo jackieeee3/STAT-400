@@ -1,0 +1,241 @@
+---
+title: "STAT 400 HW 4"
+author: Jackie Yang
+date: "Saturday, Mar 1, 2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Front Matter
+```{r, message=F, warning=F}
+#Add libraries if needed
+library(tidyverse)
+library(caret)
+library(pROC)
+```
+
+## Problem 1 
+
+This problem is inspired by Guided Exercise 2 in Section 6.8.2 of the textbook. [Medical School Admissions](http://bookdown.org/roback/bookdown-BeyondMLR/ch-logreg.html#guided-exercises-4). The data for Medical Schools Admissions may be found in `MedGPA.csv`, which is found on Canvas. The data are taken from undergraduates from a small liberal arts school over several years. We are interested in student attributes that are associated with higher acceptance rates. NOTE: When downloading the dataset from Canvas, please use Chrome. Safari and other browsers sometimes present challenges.
+
+a. Suppose our research goal is to investigate the impact of overall GPA (`GPA`) on the odds of being accepted into medical school (`Accept = "A"`) . Remove `eval=FALSE` and run the code given below. Explain the reason that this model does not directly help us to address our research goal.
+
+```{r}
+MedGPA <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/MedGPA.csv")
+head(MedGPA)
+table(MedGPA$Accept)
+
+model1 <- glm(as.factor(Accept) ~ GPA, family = binomial, data = MedGPA)
+summary(model1)
+```
+
+This model does not directly help us to address our research goal because the factor variable Accpet may have the incorrect value for the baseline. Also, other variables such as MCAT scores may be related to both the predictor and response variable and may need to be considered.
+
+**For the remaining questions, assume that we are interested in exploring the impact of different variables on the probability/odds of being accepted into medical score.**
+
+b. Compare the relative effects of improving your MCAT score versus improving your GPA on your odds of being accepted to medical school. To answer this, build one model using MCAT and another model using GPA. Interpret the relevant coefficients with respect to the odds of being accepted.
+
+```{r}
+MedGPA$Accept <- relevel(as.factor(MedGPA$Accept), ref = "D")
+
+model1_GPA <- glm(Accept ~ GPA, family = binomial, data = MedGPA)
+summary(model1_GPA)
+
+model2_MCAT <- glm(Accept ~ MCAT, family = binomial, data = MedGPA)
+summary(model2_MCAT)
+
+exp(coef(model1_GPA))
+exp(coef(model2_MCAT))
+```
+
+Based off the odds ratios, for every 1-unit increase in GPA, the odds of acceptance increase by a factor of about 233.73 and for every 1-unit increase in MCAT score, the odds of acceptance increase by a factor of about 1.2789.
+
+c. For which variable (GPA or MCAT score) is it more realistic that a student could increase the value by 1?
+The variable MCAT score is more realistic in the sense that it can increase by a value of 1. You can take the MCAT multiple times and achieve different scores based on your performance, studying, questions, etc. leading to a larger variable than GPA which is typically on a scale from 0-4. Also, GPA requires the courses that you took throughout a long period of time. Often times, even if you pass all of your courses with 100%, you can not increase your GPA by a single unit.
+
+d. If the GPA increases by 0.1, what is the impact on the odds of being accepted?
+If the GPA increases by 0.1, the odds of acceptance increase by a factor of about 1.7253.
+
+e. Report a 95% confidence interval for the impact of MCAT on the odds of being accepted.
+
+```{r}
+conf_interval <- confint(model2_MCAT)
+odds_ratio_CI <- exp(conf_interval)
+odds_ratio_CI
+```
+
+f. If you were asked to pick between the models in Part b., could you use a drop-in-deviance test? Explain your reasoning.
+Yes, we can use a drop-in deviance test because we can fit a model using both variables GPA and MCAT (larger model) and compare this model to the models where only one variable was used GPA or MCAT (reduced models).
+
+g. By hand, use the model including only GPA to estimate the probability of being accepted for a student with a 3.1 GPA.
+$log(\frac{P(Accepted = 1)}{1 - P(Accepted = 1)}) = \beta_0 + \beta_1 * GPA$
+$log(\frac{P(Accepted = 1)}{1 - P(Accepted = 1)}) = -19.207 + 5.454(3.1) = -2.3$
+$P(Accepted = 1) = \frac{1}{1 + e^2.3} = 0.0912$
+
+h. Repeat Part g., but use software to find the prediction.
+
+```{r}
+log_odds <- predict(model1_GPA, newdata = data.frame(GPA = 3.1), type = "link")
+probability <- 1 / (1 + exp(-log_odds))
+probability
+```
+
+
+i. After controlling for MCAT score, does GPA affect the odds of being accepted? Answer this question with an appropriate hypothesis test, be sure to include the hypotheses, test statistic, distribution of the test statistic under the null (and degrees of freedom if appropriate), p-value, and a conclusion in the context of the problem. NOTE: On the exam, I could ask, "Suppose we want to answer: After controlling for MCAT score, does GPA affect the odds of being accepted? What model(s) would you build to answer this and what test(s) would you perform. What distribution (including degrees of freedom if appropriate) does the test use for calculating p-values?
+$H_0: \beta_{GPA} = 0$
+$H_1: \beta_{GPA} \neq 0$
+```{r}
+model3_GPA_MCAT <- glm(Accept ~ GPA + MCAT, family = binomial, data = MedGPA)
+summary(model3_GPA_MCAT)
+```
+
+Based on the question, the null hypothesis is that there is no effect of GPA on the odds of being accepted after controlling for MCAT scores and the alternative hypothesis is that GPA does effect the odds of being accepted after controlling for MCAT scores. The test statistic is the Wald test statistic. Under the null, the test statistic follows a normal distribution. The p-value for GPA is 0.004389 < 0.05. Thus, we reject the null hypothesis and conclude that GPA does effect the odds of being accepted after controlling for MCAT scores.
+
+j. Does the impact of GPA on the odds of being accepted depend on the MCAT score? Answer this question with an appropriate hypothesis test, be sure to include the hypotheses, test statistic, distribution of the test statistic under the null (and degrees of freedom if appropriate), p-value, and a conclusion in the context of the problem.
+
+$H_0: \beta_{GPA:MCAT} = 0$
+$H_1: \beta_{GPA:MCAT} \neq 0$
+```{r}
+model_interaction <- glm(Accept ~ GPA * MCAT, family = binomial, data = MedGPA)
+summary(model_interaction)
+```
+
+Based on the question, the null hypothesis is that the impact of GPA on the odds of being accepted does not depend on the MCAT score and the alternative hypothesis is that the impact of GPA on the odds of being accepted does depend on the MCAT score. The test statistic it eh Wald test statistic. Under the null, the test statistic follows a normal distribution. The p-value for GPA:MCAT is 0.271 > 0.05. Thus, we fail to reject the null hypothesis and conclude that the impact of GPA on the odds of being accepted does not depend on the MCAT score.
+
+k. Is there any evidence that the effect of MCAT score or GPA differs for males and females? Explain your reasoning.
+
+$H_0: \beta_{GPA:Sex} = \beta_{MCAT:Sex} = 0$
+$H_1: \text{At least one interaction term is non-zero}$
+```{r}
+model4_sex_interaction <- glm(Accept ~ GPA * MCAT * Sex, family = binomial, data = MedGPA)
+summary(model4_sex_interaction)
+```
+
+Based on the question, the null hypothesis is that the effect of GPA and MCAT scores on the odds of being accepted are the same for males and females and the alternative hypothesis is that the effect of GPA and MCAT scoreso n the odds of being accepted differs between males and females. The p-values for GPA:SexM, MCAT:SexM, and GPA:MCAT:SexM are all greater than 0.05. Thus, we fail to reject the null hypothesis and concldue that there is no significant interaction between GPA, MCAT, and Sex.
+
+## Problem 2
+This problem is inspired by the Framingham Heart Study which is an ongoing cardiovascular study on residents of the town of Framingham, Massachusetts. Many variations of the dataset exist, but we will be using one variation from [Kaggle](http://www.kaggle.com/datasets/captainozlem/framingham-chd-preprocessed-data) for which someone has done some preprocessing/data cleaning. Variables include 
+
+* Demographic Variables:
+     * male: an indicator for sex (1: male, 0: female) (Nominal)
+     * age: Age of the patient;(Continuous - Although the recorded ages have been truncated to whole numbers, the concept of age is continuous)
+* Behavioral Variables
+     * education: 0: Less than High School and High School degrees, 1: College Degree and Higher (Nominal)
+     * currentSmoker: whether or not the patient is a current smoker, 1: Yes, 0: No (Nominal)
+     * cigsPerDay: the number of cigarettes that the person smoked on average in one day. (can be considered continuous as one can have any number of cigarettes, even half a cigarette.)
+* Medical (history) Variables
+     * BPMeds: whether or not the patient was on blood pressure medication, 1: On blood pressure medication, 0: not on blood pressure medication (Nominal)
+     * prevalentStroke: whether or not the patient had previously had a stroke, 1: Yes, 0: No (Nominal) 
+     * prevalentHyp: whether or not the patient was hypertensive, 1: Yes, 0: No (Nominal)
+     * diabetes: whether or not the patient had diabetes, 1: Yes, 0: No (Nominal)
+* Medical (current) Variables
+     * totChol: total cholesterol level (Continuous)
+     * sysBP: systolic blood pressure (Continuous)
+     * diaBP: diastolic blood pressure (Continuous)
+     * BMI: Body Mass Index (Continuous)
+     * heartRate: heart rate (Continuous - In medical research, variables such as heart rate though in fact discrete, yet are considered continuous because of large number of possible values.)
+     * glucose: glucose level (Continuous)
+Predict variable (desired target)
+     * TenYearCHD: 10 year risk of coronary heart disease CHD, 1: Yes, 0: No)
+
+We are interested in predicting whether the patient has a 10-year risk of future coronary heart disease (`TenYearCHD`). The dataset includes over 4,000 records and 15 attributes. Each attribute is a potential risk factor. There are demographic, behavioral, and medical risk factors. There are two research questions that we wish to answer:
+
+* (Inference) Which variables are related to the 10-year risk of future coronary heart disease (`TenYearCHD`) after controlling for the demographic variables sex and age?
+* (Prediction) How accurately can we predict 10-year risk of future coronary heart disease? 
+
+A comment on the data sets. When assessing predicting effectiveness of a model, we often take steps to guard against overfitting. One way to do this is to use a method called the Validation) set approach. Basically, we randomly split our dataset into two datasets, which we will call Train and Validation. The model is built using the Train. Then, we use the Validation, which had nothing to do with building our model, to assess how well the model will generalize to new data. We do this by applying the estimated regression equation based on the Train to obtain predictions for the Validation. I have performed the random split into Train and Validation for you. The datasets are named FramTrain.csv and FramVal.csv. NOTE: When downloading the datasets from Canvas, please use Chrome. Safari and other browsers sometimes present challenges.
+
+a. To answer the first research question, we will use the FramTrain dataset to perform variable selection using the forward selection method based on the AIC criterion. (Use the function `step` from the `stats` library). The code given below is one way of ensuring that we are controlling for the demographic variables by making sure they are included in the model. In addition to sex and age, which variables are included in the model for `TenYearCHD`? NOTE: You can remove `eval=FALSE` in the .Rmd file R chunk so that the code runs for you.
+
+```{r}
+FramTrain <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/FramTrain.csv")
+head(FramTrain)
+
+reduced_mod <- glm(TenYearCHD ~ male + age, 
+                   family = binomial, 
+                   data = FramTrain) 
+full_mod <- glm(TenYearCHD ~ ., 
+            family = binomial,
+            data = FramTrain)
+ 
+#In the full_mod code, TenYearCHD ~ . means that we include all variables in the dataset (other than TenYearCHD) as predictors (X's)
+stats::step(reduced_mod, 
+            scope = list(lower = reduced_mod, upper = full_mod), 
+            data = FramTrain, 
+            direction = 'forward')
+```
+
+In addition to sex and age, the variables sysBP, cigsPerDay, glucose, prevalentStroke, totChol, and prevalentHyp are included in the model for `TenYearCHD`.
+
+b. Using the variables selected in Part a. (be sure to include sex and age), build the logistic regression model for modeling the probability that the patient will have a 10-year risk of future coronary heart disease (TenYearCHD) using the FramTrain dataset. Include a summary of the model in your R output.
+
+```{r}
+final_model <- glm(TenYearCHD ~ male + age + sysBP + cigsPerDay + glucose + prevalentStroke + totChol + prevalentHyp, family = binomial, data = FramTrain)
+summary(final_model)
+```
+
+
+c. Interpret the coefficient of `prevalentHyp` with respect to the odds of having a 10-year risk of future coronary heart disease.
+The coefficient of `prevalentHyp` is 0.306560. Hence $e^{\beta_{prevalentHyp}} = e^{0.306560} = 1.3587$. This means that individuals with hypertension are about 1.3587 times more likely to have a 10-year risk of coronary heart disease compared to individuals without hypertension.
+
+d. Which variable(s), if any, reduce the odds of having a 10-year risk of future coronary heart disease? Explain your reasoning.
+
+```{r}
+summary(full_mod)
+```
+
+Based on the full model, we have several variables (education, currentSmoker, diaBP, and heartRate) which have a negative coefficient, indicating that they reduce the odds of having 10-year risk of future coronary heart disease.
+
+e. We now move on to answering research question 2 (How accurately can we predict 10-year risk of future coronary heart disease?). One way of doing this is to assess how well the predictions work for new data (i.e. FramVal). Using the model based on the FramTrain dataset (built in Problem 1b), obtain predictions for each patient in FramVal using a threshold of 0.5. Do **NOT** build a new model. Use the model from 1b to obtain predictions. Report the confusion matrix and find the following
+
+* the sensitivity of the test.
+* the specificity of the test.
+* the accuracy of the test.
+* the recall of the test.
+* the precision of the test.
+* the true negative rate of the test.
+
+```{r}
+FramVal <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/FramVal.csv")
+pred_probs <- predict(final_model, newdata = FramVal, type = "response")
+predictions <- ifelse(pred_probs >= 0.5, 1, 0)
+conf_matrix <- confusionMatrix(factor(predictions), factor(FramVal$TenYearCHD))
+conf_matrix
+```
+
+
+NOTE: Yes, we learned a function that will find these probabilities for you, but you should be able to calculate them yourself as well. (This is the type of question I might ask on an in-class exam. Given a confusion matrix, calculate some probabilities.)
+
+f. The issue with the method in Part e. is that we are picking a single threshold. In many instances, we want to assess the quality of the predictions across a range of thresholds. To do this, create the ROC curve for the predictions of FramVal. Then, report the area under the curve (AUC).
+
+```{r}
+roc_curve <- roc(FramVal$TenYearCHD, pred_probs)
+plot(roc_curve, main = "ROC Curve for 10-Year Risk of Future CHD")
+auc_value = auc(roc_curve)
+auc_value
+```
+
+
+g. In FramTrain, which proportion of the responses are 0 for `TenYearCHD`? What is the majority class (0 or 1)?
+
+```{r}
+proportion_0 <- mean(FramTrain$TenYearCHD == 0)
+proportion_0
+```
+
+In FramTrain, the proportion of responses for `TenYearCHD` that are 0 is 0.8478524, making it the majority class.
+
+h. Suppose that we want to obtain predictions for `TenYearCHD` in FramVal by using the majority class in FramTrain. (In other words, we will either predict that everyone in FramVal is a 0 or everyone is a 1 based on the majority class in FramTrain.) If we use this approach instead of the logistic regression model, what is our accuracy?
+
+```{r}
+majority_class_train <- as.character(names(sort(table(FramTrain$TenYearCHD), decreasing = TRUE))[1])
+predictions_majority <- rep(majority_class_train, length(FramVal$TenYearCHD))
+accuracy_majority <- mean(predictions_majority == FramVal$TenYearCHD)
+accuracy_majority
+```
+
+Our accuracy is 0.8488513, performing slightly better than the logistic regression model.
+
