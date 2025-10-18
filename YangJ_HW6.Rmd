@@ -1,0 +1,121 @@
+---
+title: "STAT 400 HW 6"
+author: Jackie Yang
+date: "Due: April 15, 2025"
+output: html_document
+---
+
+## Front Matter
+```{r, message=F, warning=F}
+#Add libraries if needed
+library(tidyverse)
+library(broom.mixed)
+library(lme4)
+library(ggplot2)
+
+LeeBryk <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/LeeBryk.csv")
+
+head(LeeBryk)
+```
+
+
+## Storyline 
+
+Lee and Bryk (1989) analyzed a set of data in order to understand the factors that influence a student's math performance. The data set `LeeBryk.csv` includes mathematics scores (variable `math`) for senior-year high school students from 160 schools. For each student, information on her/his social and economic status (`ses`) is also available. For each school, data are available on the sector (private or public) of the schools. Public schools correspond to `sector = 0`, while private schools correspond to `sector = 1`. In addition, a school level variable called mean SES (`mses`) was created from the students' SES to measure the SES of each school.
+
+We are interested in understanding how the student's social and economic status (`ses`) and the school's sector (`sector`) affect the student's math score (`math`).
+
+
+## Problem 1 - Exploratory Data Analysis
+
+a. Based on the stated storyline, what is the response variable? What are the level 1 and Level 2 observational units? What are the Level 1 and Level 2 explanatory variables? What is the random effect?
+
+The response variable is `math`, the student's mathematics score. The level 1 observational units are the individual students and the level 2 observational units are the schools, `schoolid`. The level 1 explanatory variable is the student's social and economic status, `ses` and the level 2 explanatory variables are the school sector, `sector` and the mean SES of the school `mses`. The random effect is school since multiple students are within each school.
+
+b. Create an appropriate plot to show the distribution of the `math` scores. Treat the observations as independent. What have you learned by examining the plot?
+
+```{r}
+ggplot(data = LeeBryk, mapping = aes(x = math)) + geom_histogram(fill = "red", color = "black") + labs(title = "Distribution of Math Scores", x = "Math Score", y = "Number of Students")
+```
+
+Upon plotting the data, it follows a normal distribution with left skew. There are a few odd observations though because some observations are less than 0, indicating a negative mathematics score which does not make much sense. Despite those observations, the majority of students seem to score between 10 and 20.
+
+c. Create an appropriate plot to show the distribution of the social and economic status (`ses`) values. Treat the observations as independent. What have you learned by examining the plot?
+
+```{r}
+ggplot(data = LeeBryk, aes (x = ses)) + geom_histogram(fill = "gold", color = "black") + labs(title = "Distribution of SES (Social and Economic Status)", x = "SES", y = "Number of Students")
+```
+
+Upon plotting the data, the distribution of student's social and economic status seems to follow a normal distribution centered at 0. The majoroty of the data fall between the values of -2 and 2.
+
+d. Create a new variable called `sector2` so that `sector2` take the value `Private` when `sector = 1` and a value of `Public` when `sector = 0`. Create an appropriate plot to show the distribution of `sector2`. Also, report the count and proportion of private and public schools. What have you learned by examining the plot?
+
+```{r}
+LeeBryk <- LeeBryk %>%
+  mutate(sector2 = ifelse(sector == 1, "Private", "Public"))
+
+ggplot(data = LeeBryk, aes(x = sector2)) + geom_bar(fill = "orchid", color = "black") + labs(title = "Distribution of School Sector", x = "School Sector", y = "Number of Students")
+
+sector_summary <- LeeBryk %>%
+  group_by(sector2) %>%
+  summarize(count = n()) %>%
+  mutate(proportion = count / sum(count))
+
+sector_summary
+```
+
+Upon plotting the data and displaying the counts and proportions, there seems to be more public schools than private schools.
+
+e. Treating the observations as independent, create side-by-side boxplots of `math` for each level of `sector2`. What have you learned by examining the plot?
+
+```{r}
+ggplot(data = LeeBryk, aes(x = sector2, y = math, fill = sector2)) + geom_boxplot() + labs(title = "Math Scores by School Sector", x = "School Sector", y = "Math Score", fill = "Sector Type")
+```
+
+Based on the side-by-side box plots, the students in private schools seem to have better mathematics scores (around 15) compared to students in public schools (around 12).
+
+f. Treating the observations as independent, create a plot showing `math` as a function of `ses`. Add a linear trend line. What have you learned by examining the plot?
+
+```{r}
+ggplot(LeeBryk, aes(x = ses, y = math)) + geom_point(color = "violet") + geom_smooth(method = "lm", color = "firebrick", se = TRUE) + labs(title = "Math Score vs. Student SES", x = "Social and Economic Status (SES)", y = "Math Score")
+```
+
+Based on the scatterplot, there seems to be a positive linear relationship between SES and math scores. As students' social and economic status increase, mathematics scores seem to also increase.
+
+g. To avoid the issue of dependent observations in our plots from Part f., we could generate separate plots for each school and examine trends within and across schools. Unfortunately, due to the large number of schools such a plot would be difficult to read. Find a way to subset the data to use the first 20 schools. Then create a lattice plot, including linear trend line, showing the `math` score as a function of `ses` for the 20 schools. Add color based on `sector2`. What have you learned by examining the plot?
+
+```{r}
+first20_schools <- unique(LeeBryk$schoolid)[1:20]
+
+LeeBrykSubset <- LeeBryk %>%
+  filter(schoolid %in% first20_schools)
+
+ggplot(LeeBrykSubset, aes(x = ses, y = math, color = sector2)) + geom_point() + geom_smooth(method = "lm",color = "black", se = FALSE) + facet_wrap(~ schoolid) + labs(title = "Math Score vs. SES by School (First 20 Schools)", x = "SES", y = "Math Score", color = "Sector Type") + scale_color_manual(values = c("Public" = "skyblue", "Private" = "salmon"))
+```
+
+
+## Problem 2 - Unconditional Means Model/Random Intercepts Model
+
+
+Consider the unconditional means model, which we will call Model A for the remainder of this assignment. (This is the model with no covariates and random intercepts only.) Model A is given below:
+
+$$\text{Level 1: } Y_{ij} = a_i + \epsilon_{ij} \text{ where } \epsilon_{ij} \sim N(0, \sigma^2)$$
+
+$$\text{Level 2: } a_i = \alpha_0 + u_i \text{ where } u_i \sim N(0, \sigma_u^2)$$
+
+a. Write the composite model.
+
+$$\text{Composite Model: } Y_{ij} = \alpha_0 + u_i + \epsilon_{ij} \text{ where } u_i \sim N(0, \sigma^2), \epsilon_{ij} \sim N(0, \sigma_u^2)$$
+
+b. Write code to build and estimate the unconditional means model. Name the model `modelA` and include the results of the `summary(modelA)` function on the model object. Report the estimated fixed effects and variance components from Model A, using proper notation. Then, interpret the estimates. HINT: For help, see Section 8.6.2.
+
+```{r}
+modelA <- lmer(math ~ 1 + (1 | schoolid), data = LeeBryk)
+summary(modelA)
+```
+
+The average math score across all schools is $\hat{\alpha_0} = 12.6374$, the between-school variance is estimated at $\hat{\sigma}_u^2 = 8.614$, and the within-school variance is $\hat{\sigma}^2 = 39.148$.
+
+c. Calculate and interpret the intraclass correlation coefficient. HINT: For help, see Section 8.6.2
+
+$ICC = \frac{\hat{\sigma}_u^2}{\hat{\sigma}_u^2 + \hat{\sigma}^2} = \frac{8.614}{8.614 + 39.148} = 0.180$
