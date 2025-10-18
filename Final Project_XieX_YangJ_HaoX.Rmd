@@ -1,0 +1,773 @@
+---
+title: "Predicting Breast Cancer Malignancy"
+author: "Xinyu Xie, Jackie Yang, Xu Hao"
+date: "May 9, 2025"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: flatly
+    highlight: tango
+    always_allow_html: true
+    number_sections: false 
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 7,
+  fig.height = 5)
+```
+
+
+```{r message = FALSE, warning = FALSE, echo = TRUE}
+rm(list = ls())
+library(tidyverse)
+library(kableExtra)
+library(caret)
+library(glmnet)
+library(pROC)
+library(randomForest)
+library(class)
+library(factoextra)
+library(lme4)
+Cancer_Data <- read.csv("Cancer_Data.csv")
+```
+
+## Dataset Overview
+
+**Research Question** Can a derived tumor volume feature lead to a simpler and more interpretable generalized linear model (GLM) for predicting tumor malignancy?
+
+**Main features**
+
+`id`: Represents a unique ID of each patient
+
+`diagnosis`: Indicates the type of cancer. "M" represents malignant, and "B" represents benign.
+
+`radius_mean`: mean of distances from center to points on the perimeter
+
+`texture_mean`: standard deviation of gray-scale values
+
+`area_mean`: Mean area of the cell nuclei (measured in pixels)
+
+`perimeter_mean`: mean size of core tumor
+
+`smoothness_mean`: mean of local variation in radius lengths
+
+`compactness_mean`: mean of $\frac{\text{Perimeter}^2}{\text{Area} - 1.0}$
+
+`concavity_mean`: mean of severity of concave portions of the contour
+
+`concave points_mean`: mean for number of concave portions of the contour, represents the mean values of the cancer's visual characteristics
+
+Response Variable 'diagnosis' is a categorical variable with 2 levels ("M" for malignant and "B" for benign). All other predictor variables are quantitative, capturing various characteristics of cell nuclei.
+
+A subset of quantitative features—`radius_mean`, `perimeter_mean`, and `area_mean`—served as primary predictors in the modeling process.
+
+
+
+**Resources**  
+
+- Dataset: [Kaggle – Cancer Data](https://www.kaggle.com/datasets/erdemtaha/cancer-data)  
+
+- Reference: [Volume-Diameter Article on JCPSP](https://jcpsp.pk/article-detail/comparison-of-tumor-volume-dependent-mean-diameter-with-the-longest-diameter-and-tumor-volume-in-assessing-axillary-lymph-nodes-in-breast-cancer)
+
+
+## Table Preview: Selected Predictors for Diagnosis Modeling
+
+```{r}
+Cancer_Data %>%
+  select(diagnosis, radius_mean, texture_mean, area_mean, 
+         smoothness_mean, compactness_mean, concavity_mean, concave.points_mean) %>%
+  head(5) %>%
+  kable(caption = "First 5 Rows of Key Variables Used in Modeling") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+```
+
+## Data Preparation
+
+```{r}
+#Clean and transform dataset
+Cancer_Data <- Cancer_Data %>%
+  dplyr::select(-id, -X) %>%
+  na.omit() %>%
+  mutate(
+    tumor_volume = ((pi / 6) * radius_mean * 
+                    (perimeter_mean / (2 * pi)) * 
+                    sqrt(area_mean / pi)),
+    diagnosis_bin = ifelse(diagnosis == "M", 1, 0)
+  )
+
+#Standardize selected predictors
+xvars <- c(
+  "radius_mean", "texture_mean", "perimeter_mean", "area_mean", "smoothness_mean",
+  "compactness_mean", "concavity_mean", "concave.points_mean", "symmetry_mean", "fractal_dimension_mean",
+  "radius_se", "texture_se", "perimeter_se", "area_se", "smoothness_se",
+  "compactness_se", "concavity_se", "concave.points_se", "symmetry_se", "fractal_dimension_se",
+  "radius_worst", "texture_worst", "perimeter_worst", "area_worst", "smoothness_worst",
+  "compactness_worst", "concavity_worst", "concave.points_worst", "symmetry_worst", "fractal_dimension_worst",
+  "tumor_volume"
+)
+Cancer_Data[, xvars] <- scale(Cancer_Data[, xvars], center = TRUE, scale = TRUE)
+
+#Preview cleaned dataset
+summary(Cancer_Data)
+```
+
+
+### Planned Modeling Formula
+
+Based on our exploratory analysis, we plan to fit the following logistic regression model:
+
+$$diagnosis_{bin} \sim concave.points_{worst} + tumor_{volume} + texture_{worst} + smoothness_{worst}$$
+
+
+## Exploratory Plots for Key Predictors
+
+The following boxplots illustrate the distribution of selected predictors stratified by tumor diagnosis. These visualizations support the relevance of each variable in distinguishing malignant from benign tumors.
+
+### Radius Mean by Diagnosis
+
+```{r}
+#Colorpalette
+diagnosis_colors <- c("B" = "#00BFC4", "M" = "#F8766D")
+
+ggplot(Cancer_Data, aes(x = diagnosis, y = radius_mean, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Radius Mean by Diagnosis", x = "Diagnosis", y = "Radius Mean")
+```
+
+
+Malignant tumors show significantly higher radius_mean values (median = 0.91) than benign ones (median = -0.55). This indicates that tumor size—specifically the distance from center to edge—is a strong differentiator between classes, and radius_mean serves as a critical feature in model construction.
+
+
+### Perimeter Mean by Diagnosis
+
+```{r}
+ggplot(Cancer_Data, aes(x = diagnosis, y = perimeter_mean, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Perimeter Mean by Diagnosis", x = "Diagnosis", y = "Perimeter Mean")
+```
+
+With median standardized values of 0.92 (malignant) and -0.57 (benign), perimeter_mean provides strong separation across diagnosis groups. This aligns with the biological interpretation that malignant tumors tend to exhibit more irregular and extended boundaries.
+
+### Area Mean by Diagnosis
+
+```{r}
+ggplot(Cancer_Data, aes(x = diagnosis, y = area_mean, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Area Mean by Diagnosis", x = "Diagnosis", y = "Area Mean")
+```
+
+Area_mean is another high-separation variable, with medians of 0.79 (malignant) vs. -0.56 (benign). This confirms that overall tumor size plays a major role in classification and supports including this feature in both GLM and Random Forest models.
+
+### Concave Points Worst by Diagnosis
+
+```{r}
+ggplot(Cancer_Data, aes(x = diagnosis, y = concave.points_worst, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Concave Points Worst by Diagnosis", x = "Diagnosis", y = "Concave Points (Worst)")
+```
+
+Concave points (worst) provides the strongest contrast of all features (median = 1.03 for malignant vs. -0.61 for benign), indicating more severe contour indentations in malignant tumors. Its discriminative power suggests it could dominate variable importance rankings.
+
+### Tumor Volume by Diagnosis
+
+```{r}
+ggplot(Cancer_Data, aes(x = diagnosis, y = tumor_volume, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Tumor Volume by Diagnosis", x = "Diagnosis", y = "Tumor Volume")
+```
+
+The derived tumor_volume feature—based on radius, perimeter, and area—shows a clean class split: 0.61 for malignant vs. -0.54 for benign. This validates our domain-informed feature engineering step and demonstrates that volume integrates multiple shape signals effectively.
+
+### Texture Worst by Diagnosis
+
+```{r}
+ggplot(Cancer_Data, aes(x = diagnosis, y = texture_worst, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Texture Worst by Diagnosis", x = "Diagnosis", y = "Texture Worst")
+```
+
+Although less extreme than structural metrics, texture_worst still displays a meaningful shift (0.53 malignant vs. -0.47 benign). Its relevance may lie in capturing the heterogeneity of cell nucleus surfaces, supporting its inclusion in models prioritizing subtle distinctions.
+
+### Smoothness Worst by Diagnosis
+
+```{r}
+ggplot(Cancer_Data, aes(x = diagnosis, y = smoothness_worst, fill = diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(values = diagnosis_colors) +
+  labs(title = "Smoothness Worst by Diagnosis", x = "Diagnosis", y = "Smoothness Worst")
+```
+
+Smoothness worst exhibits the smallest—but still present—class-based median shift (0.49 malignant vs. -0.31 benign). While its predictive power may be secondary, its potential contribution to ensemble or regularized models remains valuable.
+
+
+
+## Model Development: Training and Validation Split
+
+To evaluate model generalizability, we partitioned the dataset into an 80% training set and a 20% validation set. The random seed was fixed to ensure reproducibility of results.
+
+```{r}
+#Fix the random seed for reproducibility
+set.seed(123)  
+n <- nrow(Cancer_Data)
+
+#Randomly select 80% of the data to use as training set
+index <- sample(1:n, size = 0.8 * n)  
+
+#Create 80/20 training and validation sets
+Cancer_Data_train <- Cancer_Data[index, ] 
+validation_data <- Cancer_Data[-index, ] 
+```
+
+
+# Logistic Regression Model (GLM)
+
+## Stepwise Logistic Model (All Predictors Included)
+```{r, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+#Define predictor set
+predictors <- setdiff(names(Cancer_Data_train), c("id", "diagnosis", "diagnosis_bin", "predicted_prob","Hospital", "tumor_volume"))
+
+#Create full and null formulas
+full_formula <- as.formula(paste("diagnosis_bin ~", paste(predictors, collapse = " + ")))
+full_model <- glm(full_formula, data = Cancer_Data_train, family = binomial)
+null_model <- glm(diagnosis_bin ~ 1, data = Cancer_Data_train, family = binomial)
+
+#Stepwise selection using AIC & BIC
+step_aic <- step(null_model, 
+                 scope = list(lower = null_model, upper = full_model),
+                 direction = "both",
+                 trace = TRUE)
+
+step_bic <- step(null_model,
+                 scope = list(lower = null_model, upper = full_model),
+                 direction = "both",
+                 k = log(n),
+                 trace = TRUE)
+```
+
+## Stepwise Logistic Model (Excluding Tumor Volume Predictors)
+
+```{r}
+#Define predictor set
+predictors <- setdiff(names(Cancer_Data_train), c("id", "diagnosis", "diagnosis_bin", "predicted_prob","Hospital",
+  "radius_mean", "perimeter_mean", "area_mean",
+  "radius_se", "perimeter_se", "area_se",
+  "radius_worst", "perimeter_worst", "area_worst"))
+
+#Create full and null formulas
+full_formula_notumor <- as.formula(paste("diagnosis_bin ~", paste(predictors, collapse = " + ")))
+full_model_notumorralate <- glm(full_formula_notumor, data = Cancer_Data_train, family = binomial)
+null_model_notumorralate <- glm(diagnosis_bin ~ 1, data = Cancer_Data_train, family = binomial)
+
+#Stepwise selection using AIC & BIC
+step_aic_notumorralate <- step(null_model_notumorralate, 
+                 scope = list(lower = null_model_notumorralate, upper = full_model_notumorralate),
+                 direction = "both",
+                 trace = TRUE)
+
+
+step_bic_notumorralate <- step(null_model_notumorralate, 
+                 scope = list(lower = null_model_notumorralate, upper = full_model_notumorralate),
+                 direction = "both",
+                 k = log(n), 
+                 trace = TRUE)
+```
+
+
+## Model selection
+```{r}
+#AIC-selected model 
+summary(step_aic)
+#BIC-selected model
+summary(step_bic)
+
+#AIC summary with tumor volume 
+summary(step_aic_notumorralate)
+#BIC summary with tumor volume 
+summary(step_bic_notumorralate)
+```
+
+
+## Model Comparison via ROC and Confusion Matrix
+
+
+```{r}
+#Model A1: Without tumor_volume (complex)
+model_A1 <- glm(formula = diagnosis_bin ~ perimeter_worst + smoothness_worst + 
+                             texture_worst + radius_se + compactness_mean + symmetry_worst + 
+                             concave.points_mean + texture_se + concavity_worst + compactness_se, 
+                family = binomial, data = Cancer_Data_train)
+
+#Model A2: Without tumor_volume (simplified)
+model_A2 <- glm(formula = diagnosis_bin ~ perimeter_worst + smoothness_worst + 
+                             texture_worst + radius_se + concave.points_worst + compactness_mean, 
+                family = binomial, data = Cancer_Data_train)
+
+#Model B1: With tumor_volume (complex)
+model_B1 <- glm(formula = diagnosis_bin ~ tumor_volume + texture_worst + 
+                             smoothness_worst + symmetry_worst + concave.points_mean + 
+                             compactness_mean + fractal_dimension_worst, 
+                family = binomial, data = Cancer_Data_train)
+
+#Model B2: With tumor_volume (simplified)
+model_B2 <- glm(formula = diagnosis_bin ~ concave.points_worst + tumor_volume + 
+                             texture_worst + smoothness_worst, 
+                family = binomial, data = Cancer_Data_train)
+
+
+#Define evaluation function
+evaluate_model <- function(model, valid_data, model_name = "Model") {
+  # redictive probability
+  valid_data$predicted_prob <- predict(model, newdata = valid_data, type = "response")
+  
+  #Predict classes (threshold = 0.5)
+  valid_data$predicted_class <- ifelse(valid_data$predicted_prob >= 0.5 , 1, 0)
+  
+  #Pompute ROC and AUC
+  roc_obj <- roc(valid_data$diagnosis_bin, valid_data$predicted_prob)
+  auc_val <- auc(roc_obj)
+  
+  #Plot ROC curve
+  plot(roc_obj, col = "blue", main = paste("ROC -", model_name))
+  legend("bottomright", legend = paste("AUC =", round(auc_val, 3)), 
+         col = "blue", lwd = 2, bty = "n")
+  
+  #Confusion Matrix
+  valid_data$predicted_class <- factor(valid_data$predicted_class, levels = c(0, 1))
+  valid_data$diagnosis_bin <- factor(valid_data$diagnosis_bin, levels = c(0, 1))
+  
+  conf <- confusionMatrix(valid_data$predicted_class, valid_data$diagnosis_bin)
+  print(conf)
+  
+  return(auc_val)
+}
+#Evaluate all models
+auc_A1 <- evaluate_model(model_A1, validation_data, "Model A1")
+auc_A2 <- evaluate_model(model_A2, validation_data, "Model A2")
+auc_B1 <- evaluate_model(model_B1, validation_data, "Model B1")
+auc_B2 <- evaluate_model(model_B2, validation_data, "Model B2")
+```
+
+## Likelihood Ratio Test: B2 vs. Tumor Volume Only
+
+```{r, warning=FALSE}
+#Compare nested models (B2 vs. tumor_volume only) using likelihood ratio test
+model_small <- glm(diagnosis_bin ~ tumor_volume, data = Cancer_Data_train, family = binomial)
+anova(model_small, model_B2, test = "Chisq")
+```
+
+
+Adding `concave.points_worst`, `texture_worst`, and `smoothness_worst` significantly improved the model fit compared to using `tumor_volume` alone. Based on the likelihood ratio test, the full model (B2) provides a better fit and should be preferred.
+
+The final GLM model achieved an AUC of 0.984, indicating excellent performance in predicting diagnosis. Additional metrics such as accuracy, sensitivity, and specificity are available in the confusion matrix output.
+
+
+$$
+\log\left(\frac{\Pr(\text{diagnosis_bin} = 1)}{\Pr(\text{diagnosis_bin} = 0)}\right) 
+= \beta_0 
++ \beta_1 \cdot \text{concave.points_worst} 
++ \beta_2 \cdot \text{tumor_volume} 
++ \beta_3 \cdot \text{texture_worst} 
++ \beta_4 \cdot \text{smoothness_worst}
+$$
+
+
+## kNN Classification
+
+```{r, warning=FALSE}
+#Define predictor variables
+xvars <- c(
+  "radius_mean", "texture_mean", "perimeter_mean", "area_mean", "smoothness_mean",
+  "compactness_mean", "concavity_mean", "concave.points_mean", "symmetry_mean", "fractal_dimension_mean",
+  "radius_se", "texture_se", "perimeter_se", "area_se", "smoothness_se",
+  "compactness_se", "concavity_se", "concave.points_se", "symmetry_se", "fractal_dimension_se",
+  "radius_worst", "texture_worst", "perimeter_worst", "area_worst", "smoothness_worst",
+  "compactness_worst", "concavity_worst", "concave.points_worst", "symmetry_worst", "fractal_dimension_worst","tumor_volume"
+)
+
+
+#KNN tuning: search k from 1 to 100 and record accuracy
+k_values <- 1:100
+accuracy_values <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  knn_res <- knn(train = Cancer_Data_train[, xvars, drop = FALSE],
+                 test = validation_data[, xvars, drop = FALSE],
+                 cl = Cancer_Data_train$diagnosis,
+                 k = k_values[i])
+  
+  accuracy_values[i] <- mean(knn_res == validation_data$diagnosis)
+}
+
+#Find optimal k with highest validation accuracy
+accuracy_df <- data.frame(k = k_values, accuracy = accuracy_values)
+best_k <- accuracy_df$k[which.max(accuracy_df$accuracy)]
+best_accuracy <- max(accuracy_df$accuracy)
+
+#Plot accuracy vs. k
+ggplot(accuracy_df, aes(x = k, y = accuracy)) +
+  geom_line(color = "blue") +
+  geom_point(aes(x = best_k, y = best_accuracy), color = "red", shape = 17, size = 3) +
+  labs(title = "KNN Classification Accuracy by k",
+       x = "k (Number of Neighbors)",
+       y = "Accuracy") +
+  theme_minimal()
+
+#Final prediction using best k
+final_knn <- knn(train = Cancer_Data_train[, xvars, drop = FALSE],
+                 test = validation_data[, xvars, drop = FALSE],
+                 cl = Cancer_Data_train$diagnosis,
+                 k = best_k,
+                 prob = TRUE)
+
+#Save predictions
+validation_data$pred_diagnosis <- final_knn
+
+#Save probability of "M" (malignant)
+#If prediction is "B", prob attribute is for "B" → so we flip it
+validation_data$prob_M <- ifelse(final_knn == "M", attr(final_knn, "prob"), 1 - attr(final_knn, "prob"))
+
+roc_curve <- roc(response = validation_data$diagnosis,
+                 predictor = validation_data$prob_M,
+                 levels = c("B", "M"),  # Specify levels for correct direction
+                 direction = "<")
+
+auc_value <- auc(roc_curve)
+
+plot(roc_curve, col = "blue", main = "ROC Curve for kNN")
+  legend("bottomright", legend = paste("AUC =", round(auc_value, 3)),
+         col = "blue", lwd = 2, bty = "n")
+
+#Print best k and accuracy
+cat("Best k value:", best_k, "\n")
+cat("Validation Accuracy:", round(best_accuracy, 3), "\n")
+
+#Evaluate KNN performance
+true_labels <- factor(validation_data$diagnosis, levels = c("B", "M"))
+predicted_labels <- factor(validation_data$pred_diagnosis, levels = c("B", "M"))
+
+#Confusion matrix
+cm <- confusionMatrix(predicted_labels, true_labels)
+print(cm)
+
+#Print best k and accuracy
+cat("Best k value:", best_k, "\n")
+cat("Validation Accuracy:", round(best_accuracy, 3), "\n")
+
+#Ensure predicted and true labels are factors with the same levels
+true_labels <- factor(validation_data$diagnosis, levels = c("B", "M"))
+predicted_labels <- factor(final_knn, levels = c("B", "M"))
+
+#Generate confusion matrix
+cm <- confusionMatrix(data = predicted_labels, reference = true_labels)
+print(cm)
+```
+
+## KNN Classification (Simplified Model)
+
+```{r, warning=FALSE}
+#Define simplified predictor set for KNN 
+xvars_S <- c("tumor_volume","concave.points_worst" , "texture_worst" , "smoothness_worst")
+
+#Loop over a range of k values to evaluate accuracy
+k_values <- 1:100
+accuracy_values <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  knn_res <- knn(train = Cancer_Data_train[, xvars_S, drop = FALSE],
+                 test  = validation_data[, xvars_S, drop = FALSE],
+                 cl    = Cancer_Data_train$diagnosis,
+                 k     = k_values[i],
+                 prob = TRUE)
+  
+  accuracy_values[i] <- mean(knn_res == validation_data$diagnosis)
+}
+
+#Identify the best k value based on maximum accuracy
+accuracy_df <- data.frame(k = k_values, accuracy = accuracy_values)
+best_k <- accuracy_df$k[which.max(accuracy_df$accuracy)]
+best_accuracy <- max(accuracy_df$accuracy)
+
+#Visualize how accuracy changes with k
+ggplot(accuracy_df, aes(x = k, y = accuracy)) +
+  geom_line(color = "blue") +
+  geom_point(aes(x = best_k, y = best_accuracy), color = "red", shape = 17, size = 3) +
+  labs(title = "KNN Accuracy using 4 Variables Model",
+       x = "k (Number of Neighbors)", y = "Validation Accuracy") +
+  theme_minimal()
+
+#Save probability of "M" (malignant)
+#If prediction is "B", prob attribute is for "B" → so we flip it
+validation_data$prob_M <- ifelse(knn_res == "M", attr(knn_res, "prob"), 1 - attr(knn_res, "prob"))
+
+#Plot ROC and compute AUC
+roc_curve <- roc(response = validation_data$diagnosis,
+                 predictor = validation_data$prob_M,
+                 levels = c("B", "M"),  # Specify levels for correct direction
+                 direction = "<")
+
+auc_value <- auc(roc_curve)
+
+plot(roc_curve, col = "blue", main = "ROC Curve for kNN Using 4 Variable Model")
+  legend("bottomright", legend = paste("AUC =", round(auc_value, 3)),
+         col = "blue", lwd = 2, bty = "n")
+
+cat("Best k using 4 variables:", best_k, "\n")
+cat("Validation Accuracy:", round(best_accuracy, 3), "\n")
+
+#Confusion matrix
+true_labels <- factor(validation_data$diagnosis, levels = c("B", "M"))
+predicted_labels <- factor(knn_res, levels = c("B", "M"))
+cm <- confusionMatrix(data = predicted_labels, reference = true_labels)
+print(cm)
+```
+
+We used the best k value of 5, selected through validation. With an 80/20 training/validation split and a fixed random seed, the final KNN model achieved a validation accuracy of 0.974. Additional performance metrics, including sensitivity and specificity, are reported in the confusion matrix.
+
+
+
+
+## Multilevel Model
+
+
+### Research Question for Multilevel Modeling
+
+This multilevel modeling part explores the following research question:  
+
+**Does the predictive power of tumor-related features vary across latent population structures in breast cancer diagnosis?**  
+
+If such heterogeneity exists, can we identify these structural groupings through techniques like PCA or K-means clustering, and account for them using mixed-effects modeling?  
+
+Multilevel modeling is introduced here to address inter-group variability that traditional models cannot capture, allowing us to assess whether such structure has statistical explanatory power.
+
+
+
+
+## PCA 
+
+To explore potential structural groupings, we begin with dimensionality reduction via Principal Component Analysis (PCA).
+
+```{r}
+#Select relevant variables, excluding ID, diagnosis, and Hospital
+vars <- setdiff(names(Cancer_Data_train), c("id", "diagnosis", "diagnosis_bin", "predicted_prob","Hospital",
+  "radius_mean", "perimeter_mean", "area_mean",
+  "radius_se", "perimeter_se", "area_se",
+  "radius_worst", "perimeter_worst", "area_worst"))
+
+#Filter data and remove rows with missing values
+cancer_filtered <- Cancer_Data_train %>%
+  dplyr::select(all_of(vars)) %>%
+  filter(if_all(everything(), ~ !is.na(.))) %>%  
+  mutate(across(everything(), as.numeric))      
+
+#Perform PCA on the standardized data
+pca_model <- prcomp(cancer_filtered, scale. = TRUE)
+
+#Print PCA loadings
+loadings <- pca_model$rotation
+print("~~PCA Loadings~~")
+print(round(loadings, 3))
+
+#Print proportion of variance explained by each principal component
+explained_var <- summary(pca_model)$importance
+print("~~Proportion of variance explained by each PC~~")
+print(round(explained_var, 3))
+
+
+
+#Visualize variable contributions to principal components
+fviz_pca_var(pca_model, 
+             col.var = "contrib",
+             gradient.cols = c("blue", "orange", "red"),
+             repel = TRUE) +
+  ggtitle("PCA Loadings - Cancer Data (Excluding Hospital)")
+
+
+#Visualize samples colored by cos2
+fviz_screeplot(pca_model, addlabels = TRUE, ylim = c(0, 50))
+
+
+fviz_pca_ind(pca_model, 
+             geom.ind = "point", 
+             col.ind = "cos2",
+             gradient.cols = c("blue", "orange", "red"),
+             repel = TRUE) +
+  ggtitle("PCA of Samples (Individuals) - Cancer Data")
+
+
+
+#Extract PC1 and PC2 scores
+pca_scores <- as.data.frame(pca_model$x[, 1:2])  
+colnames(pca_scores) <- c("PC1", "PC2")
+
+#Apply k-means clustering (2 clusters)
+set.seed(123)  
+kmeans_result <- kmeans(pca_scores, centers = 2, nstart = 25)
+
+#Add cluster labels to PCA scores
+pca_scores$Cluster <- as.factor(kmeans_result$cluster)
+
+#Visualize clusters on PC1-PC2 plot
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = Cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(title = "K-means Clustering on PCA Results",
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_minimal() +
+  scale_color_manual(values = c("red", "blue"))  
+
+
+
+#Extract loading matrix from PCA result
+loadings_matrix <- pca_model$rotation
+
+#Initialize an empty list to store top contributing variables for each PC
+top_variables_list <- list()
+
+#Get top 10 contributing variables for each of the first 7 PCs
+for (i in 1:7) {
+  pc_loadings <- loadings_matrix[, i]
+  top_vars <- sort(abs(pc_loadings), decreasing = TRUE)[1:10]
+  top_variables_list[[paste0("PC", i)]] <- names(top_vars)
+}
+
+#Display the top variables for each of the first 7 PCs
+top_variables_list
+```
+
+
+## PCA Grouping Based on PC1 and PC2 Scores
+
+```{r}
+#Add cluster group from k-means result
+pca_scores$cluster_group <- as.factor(kmeans_result$cluster)
+
+#Group PC1 into tertiles: Low, Medium, High
+pca_scores$pc1_group <- cut(pca_scores$PC1,
+                            breaks = quantile(pca_scores$PC1, probs = c(0, 0.33, 0.66, 1)),
+                            labels = c("Low", "Medium", "High"),
+                            include.lowest = TRUE)
+
+
+#Bin PC1 and PC2 separately into two levels: Low and High
+pca_scores$pc1_bin <- cut(pca_scores$PC1, breaks=2, labels=c("Low", "High"))
+pca_scores$pc2_bin <- cut(pca_scores$PC2, breaks=2, labels=c("Low", "High"))
+
+#Combine PC1 and PC2 binary groups 
+pca_scores$pca_group <- interaction(pca_scores$pc1_bin, pca_scores$pc2_bin)
+
+#Add PCA group and cluster group as grouping variables
+pca_scores$diagnosis_bin <- Cancer_Data_train$diagnosis_bin
+pca_scores$tumor_volume <- Cancer_Data_train$tumor_volume
+pca_scores$concave.points_worst <- Cancer_Data_train$concave.points_worst
+pca_scores$texture_worst <- Cancer_Data_train$texture_worst
+pca_scores$smoothness_worst <- Cancer_Data_train$smoothness_worst
+
+#Variables used in modeling
+tumor_shape_vars <- c("concave.points_mean", "concave.points_worst", 
+                      "concavity_mean", "concavity_worst")
+
+
+#Multilevel model with PCA group as random intercept
+model1 <- glmer(diagnosis_bin ~ tumor_volume + (1 | pca_group), 
+               data = pca_scores, 
+               family = binomial)
+
+#Multilevel model with cluster group as random intercept
+model2 <- glmer(diagnosis_bin ~ tumor_volume + (1 | cluster_group), 
+               data = pca_scores, 
+               family = binomial)
+
+#View summaries and random effects
+summary(model1)
+summary(model2)
+ranef(model1)
+ranef(model2)
+```
+
+The effect of `tumor_volume` on malignant diagnoses was highly significant in both models. However, the clustering-based model demonstrated better overall fit (lower AIC and BIC), suggesting that naturally derived structural groupings explain more variation in diagnostic outcomes than manually defined regional bins.
+
+Fixed effects represent overall effects that apply to all observations. Here, the effect of tumor_volume is consistently strong and statistically significant.
+
+Random effects capture variability across latent groupings that are not the main focus but influence the response. These are included to control for unobserved heterogeneity.
+
+Among the PCA-defined groups:
+
+Low.High (small volume, irregular shape/high texture) shows the highest baseline risk,
+
+while High.Low (large volume, smooth shape/low texture) shows the lowest.
+
+
+Grouping Explanation of possible combinations of features
+
+Low.Low Small volume + Smoothness/weak texture
+
+High.Low large volume + smooth/weak texture
+
+Low.High Small volume + irregular edges/high texture
+
+High.High large volume + irregular edges/high texture
+
+
+## LASSO Regression
+
+```{r}
+#Prepare data for glmnet
+y <- Cancer_Data$diagnosis
+X <- as.matrix(Cancer_Data[, xvars_S])
+
+#Fit LASSO logistic regression with cross-validation
+set.seed(123)
+lasso_fit <- cv.glmnet(X, y, family = "binomial", alpha = 1)
+
+#Plot cross-validation error to find optimal lambda
+plot(lasso_fit)
+
+#Extract lambda that minimizes CV error
+best_lambda <- lasso_fit$lambda.min
+cat("Best lambda :", best_lambda)
+
+#Get coefficients at optimal lambda
+coef(lasso_fit, s = "lambda.min")
+```
+
+The optimal lambda is very small, indicating minimal regularization. This suggests the model behaves almost like a standard logistic regression, so LASSO adds little benefit in this case.
+
+## Random Forest
+
+```{r}
+#Convert diagnosis to factor for classification
+Cancer_Data$diagnosis <- as.factor(Cancer_Data$diagnosis)
+
+#Train a Random Forest model with 500 trees and variable importance enabled
+set.seed(123)
+rf_model <- randomForest(diagnosis ~ radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean,
+                         data = Cancer_Data,
+                         importance = TRUE,
+                         ntree = 500)
+
+#View model summary
+print(rf_model)
+
+#Variable importance plot
+varImpPlot(rf_model)
+```
+
+Here, we used a random forest model and obtained an out-of-bag (OOB) error rate of 7.91%, indicating that the model predicts the correct diagnosis approximately 92.1% of the time. Based on the confusion matrix, the model performs better at identifying benign tumors than malignant ones, possibly because benign cases are more prevalent in the dataset.
+
+In the variable importance plot, `texture_mean` shows the highest value, suggesting that prediction accuracy significantly decreases when this feature is randomly permuted. This indicates that `texture_mean` is one of the most influential predictors. In contrast, `radius_mean` has the lowest importance score, implying that the model relies less on this variable when making predictions.
+
+
+
