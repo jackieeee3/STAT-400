@@ -1,0 +1,227 @@
+---
+title: "STAT 400 HW 5"
+author: Jackie Yang
+date: "Due: Tuesday, Mar 30, 2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Front Matter
+```{r, message=F, warning=F}
+#Add libraries if needed
+library(tidyverse)
+library(nnet)
+library(kableExtra)
+library(broom)
+library(caret)
+moth <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/moth.csv")
+hsbdemo <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/hsbdemo.csv")
+```
+
+
+
+
+
+## Problem 1 
+
+This problem is inspired by Guided Exercise 3 in Section 6.8.2 of the textbook. [Moths](http://bookdown.org/roback/bookdown-BeyondMLR/ch-logreg.html#guided-exercises-4). The data may be found in `moth.csv`, which is found on [Roback's Github](http://github.com/proback/BeyondMLR) page in the data folder.  An article in the Journal of Animal Ecology by Bishop (1972) investigated whether moths provide evidence of “survival of the fittest” with their camouflage traits. Researchers glued equal numbers of light and dark morph moths in lifelike positions on tree trunks at 7 locations from 0 to 51.2 km from Liverpool. They then recorded the number of moths removed after 24 hours, presumably by predators. The hypothesis was that, since tree trunks near Liverpool were blackened by pollution, light morph moths would be more likely to be removed near Liverpool. The relevant variables:
+
+
+     * `MORPH` = light or dark
+     * `DISTANCE` = kilometers from Liverpool
+     * `PLACED` = number of moths of a specific morph glued to trees at that location
+     * `REMOVED` = number of moths of a specific morph removed after 24 hours
+
+a. Create an empirical logit plot of logits vs. `DISTANCE` by coded (colored) `MORPH`. What can we conclude from this plot? NOTE: It may take some data cleaning to create the variables necessary for finding the empirical logits.
+```{r}
+moth <- moth %>%
+  mutate(p = REMOVED / PLACED,
+         n = PLACED,
+         empirical_logit = log(p / (1 - p)))
+
+ggplot(moth, mapping = aes(x = DISTANCE, y = empirical_logit, color = MORPH)) + geom_point() + labs(x = "Distance From Liverpool (in km)", y = "Logits", color = "Morph") + geom_smooth(method = "lm", se = FALSE)
+```
+
+From the plot, we can conclude that as the distance from Liverpool increases, the logits of the dark moths increase and the logits of the light moths decrease. In other words, as the distance from Liverpool increases, the probability of dark moths being removed from tree trunks is increasing while the probability of light moths being removed from tree trunks is decreasing. This is evidence that supports our hypothesis that since tree trunks near Liverpool were blackened by pollution, light morph moths would be more likely to be removed near Liverpool.
+
+b. Do you believe the effect of `DISTANCE` depends on the value of `MORPH`? Justify your conclusion with an appropriate hypothesis test. HINT: Build 2 models and perform the appropriate drop-in-deviance test to answer the question. Be sure to include your hypotheses, test statistic, distribution of the test statistic under the null, p-value, and conclusion.
+
+```{r}
+model_reduced <- glm(cbind(REMOVED, PLACED - REMOVED) ~ DISTANCE + MORPH, data = moth, family = binomial)
+
+model_full <- glm(cbind(REMOVED, PLACED - REMOVED) ~ DISTANCE * MORPH, data = moth, family = binomial)
+
+anova(model_reduced, model_full, test = "Chisq")
+```
+
+Reduced Model: $log(\frac{p}{1 - p}) = \beta_0 + \beta_1 \text{DISTANCE} + \beta_2 \text{MORPH}$
+
+Full Model: $log(\frac{p}{1 - p}) = \beta+1 + \beta_1 \text{DISTANCE} + \beta_2 \text{MORPH} + \beta_3 \text{DISTANCE * MORPH}$
+
+$$H_0: \beta_3 = 0 \newline H_1: \beta_3 \neq 0$$
+
+The null hypothesis is that the effect of `DISTANCE` does not depend on `MORPH`, so we do not need the interaction effect. The alternative hypothesis is that the effect of `DISTANCE` does depend on `MORPH`, so we do need the interaction effect. The test statistic is $D = \text{Deviance}_{reduced} - \text{Deviance}_{full} = 25.161 - 13.230 = 11.931$. Under the null, the distribution is a chi-square distribution. The p-value is 0.0005519 < 0.05, so we reject the null hypothesis whic implies that the effect of `DISTANCE` does depend on `MORPH`
+
+c. For a model including `DISTANCE`, `MORPH`, and the interaction between them, test for goodness-of-fit. Be sure to include your hypotheses, test statistic, p-value, and conclusion.
+
+$$H_0: \text{The model fits the data well} \newline H_1: \text{The model does not fit the data well}$$
+
+```{r}
+model_full <- glm(cbind(REMOVED, PLACED - REMOVED) ~ DISTANCE * MORPH, data = moth, family = binomial)
+
+deviance_statistic <- deviance(model_full)
+df_residual <- df.residual(model_full)
+p_value <- 1 - pchisq(deviance_statistic, df_residual)
+p_value
+
+cat("Test Statistic (Residual Deviance):", deviance_statistic, "\n")
+cat("Degrees of FreedomL", df_residual, "\n")
+cat("P-Value:", p_value, "\n")
+
+if (p_value > 0.05){
+  cat("Fail to reject H0: The model fits the data well. \n")
+} else {
+  cat("Reject H0: THe model does not fit the data well, \n")
+}
+```
+
+
+## Problem 2 
+
+The dataset `hsbdemo.csv` contains information for a random sample of high school students. Students starting high school pick from among 3 program choices: general program, vocational program, and academic program. Our goal is to model the program choice using other variables in the dataset. Variables include:
+
+Variable Name  | Variable Meaning  | Notes
+:-------------: | :------------- | :-------------
+`sex`  | student's sex | Values: male and female
+`ses`  | socioeconomic status of student's family | Values: low, medium, high 
+`schtyp` | school type | Values: public and private
+`prog` | program option | Values: general, academic, vocation
+`read` | student's reading score |
+`write` | student's writing score |
+`math` | student's math score |
+`science` | student's science score |
+`socst` | student's social science score |
+`honors` | indicates student's enrollment in an honors program | Values: not enrolled and enrolled
+`awards` | the number of awards won by the student |
+
+Research Question 1: Can we model the program choice using the student's math score and socioeconomic status?
+
+Research Question 2: Should other variables be included in the model for program choice?
+
+a. First, we will visually explore the relationship between socioeconomic status, math score, and program choice. Recreate the plot shown below. Then, explain what you have learned about the variables by examining the plot.
+
+```{r}
+ggplot(data = hsbdemo, mapping = aes(x = prog, y = math)) +
+  geom_boxplot() + 
+  facet_grid( . ~ ses) + 
+  labs(x = "Program Choice",
+       y = "Math Score")
+```
+
+Based on the side-by-side box plots, it seems like those with a higher socioeconomic status seem to score higher in math. Also, students in the adademic program seem to score higher in math followed by general and vocation, respectively. 
+
+b. Calculate the mean, median, and standard deviation of math scores for each of the 3 program choices.
+
+```{r}
+hsbdemo_summary <- hsbdemo %>%
+  group_by(prog) %>%
+  summarize(mean_math = mean(math),
+            median_math = median(math),
+            sd_math = sd(math))
+hsbdemo_summary
+```
+
+
+c. Convert the program choice variable (`prog`) to a new variable named `prog2` where `prog2` is a factor and set the reference level to "vocation". *Use `prog2` as the response in all future problems.*
+
+```{r}
+hsbdemo <-
+  hsbdemo %>%
+  mutate(prog2 = as.factor(prog),
+         prog2 = relevel(prog2, ref = "vocation"))
+#,ses = factor(ses, levels = c("low", "middle", "high")))
+levels(hsbdemo$prog2)
+```
+
+    * HINT: If `fac` is the name of a variable that is a factor, then you can use the `relevel()` function to change the baseline. Use `relevel(fac, ref = "name_of_desired_baseline")`
+
+\
+
+d. Build the baseline logits model using "vocation" as the baseline and socioeconomic status and math score as the inputs. Use the `multinom` function from the `nnet` package.
+
+```{r}
+model1 <- multinom(prog2 ~ ses + math, data = hsbdemo, trace = FALSE)
+```
+
+
+e. Based on the summary shown below, which should match the results you are getting if you use the `summary` function on your model from Part d., find the estimated model equation for the log-odds a student chooses the academic program vs. the vocation program. Some sample LaTeX code (from the notes) follows that you can modify to enter your answer for this problem:
+
+
+```{r}
+summary(model1)
+```
+
+
+
+$$log(\frac{\hat{p}_{i,academic}}{\hat{p}_{i,vocation}}) = -6.318138 -0.5698649 *   \text{seslow} - 1.1673542 * \text{sesmiddle} + 0.15250634 * \text{math}$$
+f. The summary provided in the previous question provides coefficient estimates and standard errors. Manually perform the Wald Z-test to determine whether `math` should be added to the model containing socioeconomic status for the log-odds that a student chooses the academic program vs. the vocation program. Be sure to include the hypotheses, test statistic, p-value, and a conclusion in the context of the problem. HINT: This p-value calculation is different than the calculations in which we only cared about the upper tail.
+
+$$H_0: \beta_3 = 0 \newline H_1: \beta_3 \neq 0$$
+
+The null hypothesis is that the coefficient for the variable `math` is zero, which means it has no effect on the log-odds of a student choosing the academic program vs. the vocation program. The alternative hypothesis is that the coefficient for the variable `math` is non-zero, which means it does have an effect on the log-odds of a student choosing the academic program vs. the vocation program. The test statistic is calculated by $Z = \frac{\hat{\beta}_{math}}{SE(\hat{\beta}_{math})} = \frac{0.15250634}{0.02803612} = 5.44$. The p-value is calculated using a two-tailed test: $2 \times P(Z > 5.44) \approx 0$. Thus, we conclude that we should reject the null hypothesis, indicating that the variable `math` is statistically significant and should be included in our model. 
+
+g. Using the `tidy` function from the `broom` package, build a "tidy" coefficients table that also includes the 95\% confidence intervals for the impact of the variables on the logits.
+
+     - Do the statistic and p-value in the table match your answer from the previous question? 
+     - Report the 95\% confidence interval for the impact of math score on the log odds that a student chooses the academic program vs. the vocation program, after controlling for socioeconomic status.
+
+```{r}
+tidy_output <- tidy(model1, conf.int = TRUE, conf.level = 0.95)
+tidy_output
+```
+
+Yes, the statistic and p-value match. 
+
+h. Report and interpret the 95\% confidence interval for the impact of math score on the odds of a student choosing the academic program vs. the vocation program, after controlling for socioeconomic status.
+
+The 95% confidence interval for the impact of math score on the log odds that a student chooses the academic program vs. the vocation program after controlling for socioeconomic status is (0.09755656, 0.2074561).
+
+i. Manually construct the 90\% confidence interval for the impact of math score on the odds of a student choosing the academic program vs. the vocation program, after controlling for socioeconomic status.
+
+$CI = \hat{\beta} \pm {Z_{\alpha / 2}} \times SE(\hat{\beta}) = 0.15250634 \pm 1.645 * 0.02803612 = 0.15250634 \pm 0.046119417 = (0.1064, 0.1986)$
+
+j. For each person in the dataset, use the model to predict the probabilities associated with each program. Then, create the confusion matrix **and** report the overall accuracy.
+
+```{r}
+predicted_probs <- predict(model1, newdata = hsbdemo, type = "probs")
+predicted_classes <- colnames(predicted_probs)[max.col(predicted_probs, ties.method = "first")]
+conf_matrix <- confusionMatrix(factor(predicted_classes, levels = levels(hsbdemo$prog2)), hsbdemo$prog2)
+conf_matrix
+accuracy <- conf_matrix$overall["Accuracy"]
+cat("The overall accuracy is:", accuracy)
+```
+
+
+k. Now, we move on to Research Question 2. Use the dataset to perform variable selection using the backward elimination method based on the AIC criterion. (Use the function `step` from the `stats` library). Which variables are included in the baseline logits model for `prog2`? NOTE: When doing backward elimination, do not include the `id` or the `prog` variable for consideration in the model. 
+
+```{r}
+full_model <- multinom(prog2 ~ ses + math + read + write + science + socst + sex + schtyp + honors + awards, data = hsbdemo)
+final_model <- step(full_model, direction = "backward", trace = TRUE)
+summary(final_model)
+```
+
+
+l. Compare the models from Part d. (X variables ses and math) and Part k. (X variables selected by backward elimination). Should the extra variables be added to the model? Justify your answer using an appropriate test/comparison of metrics.
+
+```{r}
+model_baseline <- multinom(prog2 ~ ses + math, data = hsbdemo)
+model_final <- final_model
+AIC(model_baseline, model_final)
+anova(model_baseline, model_final, test = "Chisq")
+```
+
+The Akaike Information Criterion (AIC) can be used to measure the model quality. The final model has a significantly lower AIC which suggests that adding the extra variables improves the model fit. Based on the Likelihood Ratio Test, out Null Hypothesis is that the additional variables do not significantly improve the model and the Alternative Hypothesis is that the additional variables do improve the model. The p-value is close to 0, so we reject the null hypothesis and conclude that the additional variables do significantly improve the model.
+
