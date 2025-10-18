@@ -1,0 +1,154 @@
+---
+title: "STAT 400 HW 3"
+author: Jackie Yang
+date: "Due: Finish before Mar 2, 2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Front Matter
+```{r, message=F, warning=F}
+#Add libraries if needed
+library(ggplot2)
+library(dplyr)
+```
+
+## Problem 1 - Conceptual Questions
+a. Explain 3 reasons why the goodness-of-fit test may suggest a poor model fit.
+1. We may be missing important covariates or interactions; a more comprehensive dataset may be needed
+2. There may be extreme observations that may cause the Pearson (or deviance) statistic to be larger than expected
+3. Lastly, there may be a problem with the Poisson model. The variance may appear to be larger than the corresponding means. In that case, the response is more variable than the Poisson model would imply, and the response is considered to be overdispersed
+
+b. Explain what is meant by overdispersion.
+Overdispersion suggests that there is more variation in the response than the model implies
+
+c. What two methods were mentioned for accounting for overdispersion?
+1. Use an estimated dispersion factor to inflate standard errors
+2. Use a negative-binomial regression model
+
+d. Why are quasi-Poisson models used, and how do the results typically compare for corresponding models using regular Poisson regression?
+Quasi-Poisson models are used when there is overdispersion present in the data. In quasi-poisson, standard errors are larger and p-values are generally larger.
+
+## Problem 2 
+The number of male "satellite" horseshoe crabs is recorded for a sample of female horseshoe crabs in the data set "Crabs.csv", which may be found on Canvas. Each female horseshoe crab in the study had a male crab attached to her in her nest. The study investigated factors that affect whether the female crab had any other males, called satellites, residing near her. Explanatory variables that are thought to affect this included the female crab’s color (`color`), spine condition (`spine`), weight (`weight` measured in g), and carapace width (`width` measured in cm). The response outcome for each female crab is her number of satellites (`satellite`). There are 173 females in this study.
+
+NOTE: When downloading the dataset from Canvas, please use Chrome. Safari and other browsers sometimes present challenges.
+
+a. Width and weight are obvious quantitative variables. What are the possible values that color and spine can take, and how often do those values show up in the dataset?
+```{r}
+Crabs <- read.csv("C:/ESSENTIALS/School OS/Junior Spring 2025/STAT 400/Datasets/Crabs.csv")
+head(Crabs)
+
+Crabs %>% 
+  count(color)
+
+Crabs %>%
+  count(spine)
+```
+
+
+b. It turns out the `color` values are essentially measuring the extent of darkness and we will treat `color` as quantitative. The `spine` values should be treated as nominal. Convert `spine` to a factor. NOTE: You can use `as.factor()` to achieve this.
+```{r}
+Crabs <- Crabs %>%
+  mutate(spineFactor = as.factor(spine))
+str(Crabs)
+```
+
+
+c. We wish to compare two Poisson regression models for predicting the number of satellites. In particular, we are interested in testing whether the spine condition impacts the number of satellites when controlling for color, weight, and width. To do this, we compare two models:
+
+     - i. the model containing all 4 predictors (`color`, `spine` as a factor, `weight`, and `width`) along with all two-way interaction terms.
+
+     - ii. the model containing `color`, `weight`, `width`, and all two-way interactions terms 
+
+
+    NOTE: In order to create the first model, you can use a model statement of the form: `satellite ~ (color + spineFactor + weight + width)^2` in the `glm` function call.
+
+    Perform an appropriate test using a level of significance of $\alpha = 0.05$. You should state the name of the test you are using, the hypotheses, the value of the test statistic, the distribution of the test statistic under the null, the p-value, and a conclusion in the context of the problem.
+
+```{r}
+full_model1 <- glm(satellite ~ (color + spineFactor + weight + width)^2, family = poisson, data = Crabs)
+reduced_model1 <- glm(satellite ~ (color + weight + width)^2, family = poisson, data = Crabs)
+summary(full_model1)
+summary(reduced_model1)
+anova(reduced_model1, full_model1, test = 'Chisq')
+```
+
+The test conducted was the Likelihood Ratio Test. The null hypothesis is that the variable `spineFactor` and all interactions with the variable do not significantly improve the model fit. The alternative hypothesis is that the variable `spineFactor` and its interactions significantly improve model fit. By the Likelihood Ratio Test, the test statistic is $G^2$ = 9.1292. The distribution of the test statistic under the null follows a Chi-Square distribution. The p-value for the test is 0.3315, meaning we fail to reject the null hypothesis, concluding that the variable `spineFactor` and its interactions do not significantly improve the model.
+
+d. Regardless of the conclusion in the previous question. Remove `spine` and all interactions involving `spine` from the model. Perform an appropriate test to determine whether the color-by-weight interaction may also be dropped from the model. You should know to report the name of the test you are using, the hypotheses, the value of the test statistic, the p-value, and a conclusion in the context of the problem.
+```{r}
+full_model2 <- glm(satellite ~ (color + weight + width)^2, family = poisson, data = Crabs)
+reduced_model2 <- glm(satellite ~ color + weight + width + color*width + width*weight, family = poisson, data = Crabs)
+summary(full_model2)
+summary(reduced_model2)
+anova(reduced_model2, full_model2, test = 'Chisq')
+```
+
+The test used was the Likelihood Ratio Test. The null hypothesis is that the variable `spine` and all interactions involving `spine` do not significantly improve model fit. The alternative hypothesis is that the variable `spine` and all interactions involving `spine` improve the model fit. The value of the test statistic is $G^2$ = 0.092384. The p-value is 0.7612, meaning we fail to reject the null hypothesis, concluding that the variable `spine` and all interactions involving `spine` do not significantly improve model fit.
+
+e. For the model containing color, width, weight, color-width interaction, and the width-weight interaction, explain why the width term should not be removed from the model despite its p-value. Also, explain why interpreting the rate ratio associated with weight is not straightforward.
+The width term should not be removed from the model despite its p-value because other interactions such as color-width and width-weight interaction terms may be significant in fitting the model. Interpreting the rate ratio associated with weight is not straightforward because of the width-weight interaction term. The effect of weight on the outcome depends on the width.
+
+f. Based on the models analyzed, which model would you choose? Explain your reasoning.
+I think the reduced model with variables `color`, `weight`, and `width` with color-width and width-weight interaction terms should be chosen because in both scenarios, we failed to reject the null hypothesis, meaning that the variables we considered removing are not significant in improving model fit.
+
+g. Using the model in Part e., predict the log of the mean number of male satellites for females with color 1, spine 2, width 26cm, and weight 2500g? NOTE: If a variable is mentioned here that is not in the model, that is fine.
+```{r}
+new_data <- data.frame(color = 1, spine = 2, width = 26, weight = 2500)
+
+predict_log_satellites <- predict(reduced_model2, newdata = new_data, type = 'link')
+
+predict_log_satellites
+```
+
+
+h. Using the model in Part e., predict the mean number of male satellites for females with color 1, spine 2, width 26cm, and weight 2500g. 
+```{r}
+predict_satellites <- exp(predict_log_satellites)
+
+predict_satellites
+```
+
+
+i. Is there evidence of lack of fit for the model from Part e.? Perform the appropriate test. Be sure to state the name of the test, the hypotheses, the value of the test statistic, the p-value, the sampling distribution of the test statistic under the null, and a conclusion in the context of the problem.
+```{r}
+deviance_value <- deviance(reduced_model2)
+df_residual <- df.residual(reduced_model2)
+p_value <- 1 - pchisq(deviance_value, df_residual)
+
+deviance_value
+df_residual
+p_value
+```
+
+The test used is the Goodness-of-Fit Test. The null hypothesis is that the model provides a good fit for the data (no lack of fit) and the alternative hypothesis is that the model does not provide a good fit to the data (lack of fit). The test statistic is the deviance. The p-value is close to 0. Under the null hypothesis, the statistic follows a Chi-squared distribution. In the context of the problem, we reject the null hypothesis and conclude that there is a lack of fit.
+
+j. Lack of fit does not necessarily mean that there is a problem with overdispersion. Before incorporating an overdispersion parameter, what other things might we try? (You do not have to do them for this problem, but what could we try?)
+We could include additional predictors or interaction terms, check for residual plots and influential observations, use a negative binomial model, check for collinearity, etc.
+
+k. Estimate the overdispersion parameter.
+```{r}
+pearson_chisq <- sum(residuals(reduced_model2, type = 'pearson')^2)
+df_residual <- df.residual(reduced_model2)
+overdispersion_parameter <- pearson_chisq / df_residual
+overdispersion_parameter
+```
+
+
+l. Fit the model with the overdispersion parameter and display the summary of the model.
+```{r}
+quasi_model <- glm(satellite ~ (color + weight + width)^2, family = quasipoisson, data = Crabs)
+summary(quasi_model)
+```
+
+
+m. Many of the terms that were statistically significant from the model in Part e. are no longer statistically significant in the model from Part l. Explain why this is not surprising. 
+This is not surprising because the adjustment for overdispersion increases standard errors and in turn, makes the test statistics smaller and p-values larger. 
+
+
+
+
