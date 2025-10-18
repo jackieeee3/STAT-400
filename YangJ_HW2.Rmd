@@ -1,0 +1,276 @@
+---
+title: "STAT 400 HW 2"
+author: 'Jackie Yang'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Front Matter
+```{r, message=F, warning=F}
+library(dplyr)
+library(ggplot2)
+#Add libraries if needed
+```
+
+
+
+## Problem 1
+(Interaction) Recall the [gender discrimination study](https://bookdown.org/roback/bookdown-bysh/ch-MLRreview.html#guided-exercises) and data from HW 1:
+
+```{r, indent = "     "}
+banksalary = read.csv(file='https://raw.githubusercontent.com/proback/BeyondMLR/master/data/banksalary.csv', header=T)
+```
+
+a. Suppose we are interested in investigating the relationships between beginning salary, experience, and age. Rather than using the employee's age directly, you should crudely classify an employee as "young" or "old" by using the median age as a breakpoint for categorizing workers. (If any employee's age matches the median, assign them to the "young" category.) Then, generate an appropriate color-coded scatterplot with trend lines and comment on whether you think there is an interaction effect between experience and age group.
+```{r}
+head(banksalary)
+median_age = median(banksalary$age, na.rm = TRUE)
+banksalary$AgeGroup <- ifelse(banksalary$age <= median_age, 'Young', 'Old')
+banksalary$AgeGroup <- factor(banksalary$AgeGroup, levels = c('Young', 'Old'))
+
+ggplot(data = banksalary, mapping = aes(x = exper, y = bsal, color = AgeGroup)) + geom_point() + geom_smooth(method = 'lm', se = FALSE) + labs(title = 'Beginning Salary vs. Experience by Age Group', x = 'Experience (in months)', y = 'Beginning Salary', color = 'Age Group')
+```
+
+Based on the scatterplot, I think that there is an interaction effect between experience and age group because based on the plot, observations in the Young age group tend to have less experience than observations in the Old age group, which is to be expected because older individuals have had more time to gain experience than their younger counterparts.
+
+b. Build a model for beginning salary that uses experience, age group (young or old), and the interaction between experience and age group. Then, interpret the partial t-test associated with the interaction.
+```{r}
+model <- lm(bsal ~ exper * AgeGroup, data = banksalary)
+summary(model)
+```
+
+The t-test for AgeGroupOld is > 0.05, indicating that older employees do not tend to have higher salaries than younger employees. Although the t-test for exper:AgeGroupOld indicates that the interaction is statistically significant. Experience influences salary differently for young and old employees.
+
+c. Based on the partial t-test for the age group indicator in the model from Part b., explain why age group should NOT be removed from the model if the model already has experience and the experience-age group interaction even though the p-value suggests a lack of statistical significance.
+
+AgeGroup should not be remove from the model because the interaction term exper:AgeGroup depends on it. The partial t-tests indicate that interaction effects are present in the model so AgeGroup should be kept.
+
+
+d. Using the model from Part b., perform the calculations listed below. You may either perform the calculations by hand or use R to perform them. Either way, include enough work/code so that it is obvious how you are calculating the answers.
+
+    - Predict the beginning salary for a young employee with 75 months of experience.
+    - Predict the beginning salary for a young employee with 76 months of experience.
+    - Predict the beginning salary for an old employee with 75 months of experience.
+    - Predict the beginning salary for an old employee with 76 months of experience.
+
+```{r}
+employees_sample <- data.frame(exper = c(75, 76, 75, 76), AgeGroup = c('Young', 'Young', 'Old', 'Old'))
+predictions <- predict(model, newdata = employees_sample)
+employees_sample$PredictedSalary <- predictions
+print(predictions)
+```
+
+
+e. What impact does an increase of 1 month of experience have on beginning salary? Explain.
+
+For young employees, an increase of 1 month of experience increases beginning salary by 6017.494 - 6001.767 = $15.727
+For old employees, an increase of 1 month of experience increases beginning salary by 5307.444 - 5306.322 = $1.122
+
+
+## Problem 2 
+(Comparing Models using Likelihoods) Recall the [gender discrimination study](https://bookdown.org/roback/bookdown-bysh/ch-MLRreview.html#guided-exercises) and data from HW 1:
+
+```{r, indent = "     "}
+banksalary = read.csv(file='https://raw.githubusercontent.com/proback/BeyondMLR/master/data/banksalary.csv', header=T)
+```
+
+     Treating beginning salary as the response ($Y$) and denoting predictors experience, education, seniority, and sex by $x_1,\ldots,x_4$, respectively, consider the regression model shown below.
+$$\text{Model 1: }Y_i=\beta_0+\beta_1x_{1i}+\beta_2x_{2i}+\beta_3x_{3i}+\beta_4x_{4i}+\epsilon_i$$
+
+     This model can be fit with the following code:
+
+```{r,indent = "      "}
+model1 = lm(bsal~exper+educ+senior+sex,data=banksalary)
+```
+
+a. Suppose we want to know if the model above could be reduced to 
+\[\text{Model 2: }Y_i=\beta_0+\beta_1x_{1i}+\beta_4x_{4i}+\epsilon_i
+\]
+State the hypotheses of interest in two ways: 1) in terms of the $\beta$ parameters and 2) in terms of the models (full vs reduced).
+
+In terms of the $\beta$ parameters:
+$$H_0: \beta_2 = \beta_3 = 0$$
+$$H_1: \text{At least one } \beta_i \neq 0$$
+
+In terms of the models:
+$$H_0: Y_i = \beta_0 + \beta_1 x_{1i} + \beta_4 x_{4i} + \epsilon_i$$
+$$H_1: Y_i = \beta_0 + \beta_1 x_{1i} + \beta_2 x_{2i} + \beta_3 x_{3i} + \beta_4 x_{4i} + \epsilon_i$$
+
+b. Use R's anova() function with both models above to carry out the ANOVA F-test of the desired hypotheses. Be sure to state the value of the test statistic, the p-value, and the conclusion in the context of the problem.
+```{r}
+model2 = lm(bsal ~ exper + sex, data = banksalary)
+anova_results <- anova(model1, model2)
+print(anova_results)
+```
+
+Based on the results, the test statistic if F = 16.454, the p-value is $8.498 \times 10^{-7}$, and the conclusion is that we reject the null hypothesis and accept the alternative hypothesis. This implies the variables `educ` and `senior` are statistically significant and should not be removed from the model.
+
+c. (Manual verification of the results in b.) Note that in the anova results in R, the degrees of freedom for the error (Df.res) is the sample size minus the number of $\beta$ parameters, including the intercept but NOT the error variance $\sigma^2$). So, models with more parameters will have a lower Df.res value reported this way. Verify the anova F-test test statistic by constructing the F statistic manually (i.e., use R as a calculator and calculate the value based on the numbers shown in the anova output). Remember that R refers to Sum of Squares for Error (SSE) as Residual Sum of Squares (RSS).
+\[F={(SSE_{\mbox{reduced}}-SSE_{\mbox{full}})/(dfe_\mbox{reduced} - dfe_{\mbox{full}})\over MSE_{\mbox{full}}}
+\]
+```{r}
+F = ((31130187 - 22657469) / (90 - 88)) / (22657469 / 88)
+print(F)
+```
+
+
+d. An alternative approach to F-test for this situation is the likelihood-ratio test (LRT), which can be constructed from the statistic
+\[G^2=-2(\log L_0-\log L_1)
+\]
+where $\log L_0$ and $\log L_1$ are the computed (max) log-likelihoods for the reduced and full models, respectively. For large $n$, $G^2$ has an approximate $\chi^2$ distribution with degrees of freedom equal to the difference in parameters between the full and reduced models (same as the numerator Df in the F statistic). Find the LRT test statistic above and its p-value from the approximate $\chi^2$ distribution. State a conclusion in the context of the problem.
+```{r}
+logL0 <- logLik(model2)
+logL1 <- logLik(model1)
+G2 <- -2 * (logL0 - logL1)
+cat('Value for G^2:', G2, '\n')
+df_LRT <- attr(logL1, "df") - attr(logL0, "df")
+cat('Degrees of freedom for Log Likelihood Test:', df_LRT, '\n')
+p_value <- pchisq(G2, df = df_LRT, lower.tail = FALSE)
+cat('p-value:', p_value)
+```
+
+
+e. How do the results of the LRT compare with those of the F test above?
+
+The results remain the same. However, the p-value for LRT is larger than the F test.
+
+f. The AIC for a given model is given by
+\[\mbox{AIC} = -2\log L_1+2(\#\mbox{parameters}),
+\]
+where the number of parameters here includes the intercept $\beta_0$ AND the error variance $\sigma^2$. Why would a smaller value for AIC be preferred to a larger one?
+
+A smaller AIC value corresponds to a larger $R^2$ value, making it a better fit for the model.
+
+g. Use AIC values to compare the model with all four predictors (model1) to the model with age, sex, and experience (model3). 
+```{r}
+model3 <- lm(bsal ~ age + sex + exper, data = banksalary)
+AIC(model1, model3)
+```
+
+Based on the AIC values, model1 is preferred as it has a smaller AIC value compared to model3.
+
+h. Explain why you cannot use the LRT or F-test to compare model1 and model3.
+
+LRT and F-test require nested models where a reduced model is formed by removing one or more predictors from the full model. 
+
+
+```{r}
+remove(list = ls())
+
+#Add libraries if needed
+library(tidyverse)
+library(kableExtra)
+
+#Read In Dataset:
+elephants <- read.csv(file = "https://raw.githubusercontent.com/proback/BeyondMLR/master/data/elephant.csv")
+```
+
+## Problem 3
+1. (Inspired by Guided Exercise 2 in the Chapter 4 Exercises) How does age affect male elephant mating patterns? An article by Poole (1989) investigated whether mating success in male elephants increases with age and whether there is a peak age for mating success. To address this question, the research team followed 41 elephants for one year and recorded both their ages and their number of matings. The data (Ramsey and Schafer 2002) is found in `elephant.csv`, which can be accessed on the book's [Github page](http://github.com/proback/BeyondMLR). The variables include:
+
+    * `MATINGS` = the number of matings in a given year
+    * `AGE` = the age of the elephant in years
+
+a. Create a histogram of MATINGS. Use a very small binwidth so that the discrete nature of the distribution is apparent. Is there preliminary evidence that number of matings could be modeled as a Poisson response? Explain.
+```{r}
+head(elephants)
+ggplot(data = elephants, mapping = aes(x = MATINGS)) + geom_histogram(binwidth = 1, color = 'black', fill = 'grey') + labs(x = 'Number of Matings', y = 'Frequency')
+mean_matings <- mean(elephants$MATINGS)
+var_matings <- var(elephants$MATINGS)
+mean_matings
+var_matings
+
+```
+
+There is evidence that the number of matings could be modeled as a Poisson response because the distribution looks to be right-skewed, but the variance is greater than the mean.
+
+b. For each age, calculate the mean number of matings. Take the log of each mean and plot it by AGE.
+    * What assumption can be assessed with this plot?
+    Linearity assumption.
+    
+    * Is there evidence of a quadratic trend on this plot?
+    There is no evidence of a quadratic trend.
+    
+    
+```{r}
+age_means <- elephants %>%
+  group_by(AGE) %>%
+  summarise(mean_matings = mean(MATINGS))
+
+age_means <- age_means %>%
+  mutate(log_mean_matings = log(mean_matings))
+
+ggplot(data = age_means, mapping = aes(x = AGE, y = log_mean_matings)) + geom_point() + geom_smooth(method = 'lm', se = FALSE) + labs(x = 'Age (in years)', y = 'Natural Log of Mean Matings')
+```
+
+
+c. In Poisson regression, there is an assumption that the mean will equal the variance for a given value of x. If we were to only use AGE for predicting MATINGS, do you believe the assumption that mean=variance is met? To answer this, “discretize” age by cutting it into intervals of length 5 beginning with 25. Then, plot the distribution of MATINGS for each AGE interval and find the mean and variance of MATINGS for each interval. Comment on whether you believe the assumption is satisfied.
+
+
+    * NOTE: When the sample size is small (here it is 41), this assumption is very difficult to assess. Even when we discreteize age, some of the age groups have so few observations that is difficult to address whether the mean=variance and/or whether the Poisson assumption is reasonable.
+
+\
+
+```{r}
+elephants <- elephants %>%
+  mutate(AgeGroup = cut(AGE, breaks = seq(25, max(AGE) + 5, by = 5), right = FALSE))
+
+age_summary <- elephants %>%
+  group_by(AgeGroup) %>%
+  summarize(mean_matings = mean(MATINGS), var_matings = var(MATINGS), count = n())
+
+age_summary
+```
+
+
+d. Fit a Poisson regression model for MATINGS that is based on a linear term for AGE. Report the estimated equation for the log mean number of MATINGS.
+```{r}
+poisson_model <- glm(MATINGS ~ AGE, data = elephants, family = poisson)
+summary(poisson_model)
+```
+
+
+e. Interpret the rate ratio associated with AGE in the context of the problem.
+The rate ratio associated with AGE is $e^{\beta_1} = e^{0.06869} = 1.071104115$. The rate ratio is greater than 1, indicating that each additional year of age increases the expected number of matings.
+
+f. Find a 90% confidence interval for the rate ratio associated with AGE **AND** interpret in the context of the problem.
+```{r}
+beta1 <- coef(poisson_model)['AGE']
+se_beta1 <- summary(poisson_model)$coefficients['AGE', 'Std. Error']
+
+lower_bound <- exp(beta1 - 1.645 * se_beta1)
+upper_bound <- exp(beta1 + 1.645 * se_beta1)
+
+cat('90% Confidence Interval for Rate Ratio Associated with Age:', lower_bound, upper_bound)
+```
+
+With 90% confidence, each additional year of age increases the expected number of matings by around 4.7% to 9.5% on average.
+
+g. As age increases, does the mean number of MATINGS increase, decrease, or stay the same? Explain your reasoning.
+As age increases, the mean number of Matings increase because the rate ratio is greater than 1, indicating that there is a percentage increase in the number of Matings as age increases.
+
+h. Are the number of matings significantly related to age? Test with a drop-in-deviance test using a Type I Error rate of 0.05. 
+```{r}
+full_model <- glm(MATINGS ~ AGE, data = elephants, family = poisson)
+reduced_model <- glm(MATINGS ~ 1, data = elephants, family = poisson)
+
+anova(reduced_model, full_model, test = 'Chisq')
+```
+
+The p-value is less than 0.05 so we conclude that Matings is significantly related to Age.
+
+i. Add a quadratic term in AGE to determine whether there is a maximum age for the number of matings for elephants. Is a quadratic model preferred to a linear model? Test with a drop-in-deviance test using a Type I Error rate of 0.05. 
+```{r}
+linear_model <- glm(MATINGS ~ AGE, data = elephants, family = poisson)
+quadratic_model <- glm(MATINGS ~ AGE + I(AGE^2), data = elephants, family = poisson)
+
+anova(linear_model, quadratic_model, test = 'Chisq')
+```
+
+The p-value is greater than 0.05 so we can conclude that the linear model is sufficient.
+
+## Uploads
+Please upload your .html and .Rmd files in Canvas. Name the files using LastnameFirstinitial_HW2.fileextension.
